@@ -27,25 +27,76 @@ Sobram nove serviços: `auth db imgproxy kong meta realtime storage studio supav
 
 ## Antes de implantar
 
-**Postgres 17 não abre um data dir de Postgres 15.** Medido: o container sai com
-código 1 e `FATAL: database files are incompatible with server`. Ou o data dir
-nasce vazio, ou roda-se `utils/upgrade-pg17.sh` antes.
+São **três** modos de falha do `db`, e o log do container é o que os separa —
+a correção difere em cada um.
 
-**O PGDATA é volume NOMEADO (`db-data`), não bind mount.** Medido no macOS com
-bind mount: `PostgreSQL Database directory appears to contain a database;
-Skipping initialization`, o `roles.sql` não roda, e o banco fica com **1 papel em
-vez de 13** — todo serviço falha com `28P01`. Com volume nomeado, inicializa
-correto. Os seis init scripts continuam bind mount; só o PGDATA mudou.
+### 1. `db-config` herdado de outra versão da imagem
 
-Em 2026-09-09 o `db` subiu **unhealthy em ~7 s no servidor**, com o `.env` já
-criado — relato do operador, que atribuiu ao PGDATA. A troca é dessa data.
-**Não medido:** que ela resolve. Ninguém deste repositório alcança o servidor.
+**É a causa do laço de 2026-09-09 no servidor**, e foi reproduzida no Mac:
 
-**E o log do container é o que separa os dois modos de falha**, porque a correção
-difere. `database files are incompatible with server` é data dir do 15 aberto
-pelo 17, e aí o caminho é `utils/upgrade-pg17.sh` **com os dados preservados** —
-volume nomeado nasce vazio, então o que estiver em `volumes/db/data` deixa de ser
-lido (não é apagado, fica órfão). Numa instalação nova não há o que preservar.
+```
+Success. You can now start the database server using: ...
+LOG:   could not open configuration directory "/etc/postgresql-custom/conf.d": No such file or directory
+FATAL: configuration file "/etc/postgresql/postgresql.conf" contains errors
+```
+
+O initdb conclui, o servidor sai com código 1, e o `restart: unless-stopped`
+recomeça — laço. **Não é parâmetro recusado:** é um `include_dir` apontando para
+um diretório que não existe. Medido nas duas imagens: `/etc/postgresql-custom`
+tem `conf.d` na `17.6.1.084` e **não tem** na `15.8.1.085`, e a `postgresql.conf`
+do 17 faz `include_dir` nele. Volume nomeado **não é repovoado** quando a imagem
+muda de versão, então um `db-config` criado pelo 15 derruba o 17 para sempre.
+
+O `docker-compose.pg17.yml` do modelo avisa disso — e é a única coisa além da tag
+da imagem que ele traz: *"If starting fresh with a leftover db-config volume from
+PG 15, you may see FATAL: invalid secret key. Either remove the old volume or fix
+ownership."* Nós levamos a tag e deixamos o aviso para trás.
+
+**A correção é no SERVIDOR, não neste repositório:** apagar o volume `db-config`
+e subir de novo. Ele só guarda a chave do pgsodium, que é regerada.
+
+```sh
+docker volume ls | grep db-config      # achar o nome com o prefixo do projeto
+docker volume rm <projeto>_db-config
+```
+
+Não use `docker compose down -v`: aquilo apaga o `db-data` junto, e com ele o
+banco. **Regra que fica:** trocou a tag da imagem do `db`, apague o `db-config`.
+
+### 2. Postgres 17 não abre um data dir de Postgres 15
+
+Medido: o container sai com código 1 e `FATAL: database files are incompatible
+with server`. Ou o data dir nasce vazio, ou roda-se `utils/upgrade-pg17.sh`
+antes — este preserva os dados, e um volume vazio não.
+
+### 3. PGDATA em bind mount pode pular os init scripts
+
+Por isso o PGDATA é volume **nomeado** (`db-data`). Medido no macOS com bind
+mount: `PostgreSQL Database directory appears to contain a database; Skipping
+initialization`, o `roles.sql` não roda, e o banco fica com **1 papel em vez de
+13** — todo serviço falha com `28P01`. Os seis init scripts continuam bind
+mount; só o PGDATA mudou.
+
+**Correção do registro:** o `unhealthy` em ~7 s de 2026-09-09 foi atribuído a
+este modo, e a troca para volume nomeado foi feita por causa dele. Não era —
+era o modo 1. A troca fica, porque o modo 3 é real e está medido, mas ela não
+resolveu nada naquele dia. Diagnóstico atribuído sem ler o log do container é o
+que produziu um commit que não consertou o que se propunha a consertar.
+
+### Por que `log_min_messages=warning`, e não `fatal`
+
+O modelo usa `fatal`, para o Realtime não encher o log com as consultas de
+polling. **Medido: `fatal` suprime a linha `LOG` que NOMEIA o arquivo que
+falta**, e sobra só `contains errors`, que não diagnostica nada — foi
+exatamente o que cegou o servidor. Os dois lados, mesmo defeito:
+
+| `log_min_messages` | o que o log mostra |
+|---|---|
+| `fatal` (modelo) | só `FATAL: ... contains errors` |
+| `warning` (nosso) | `LOG: could not open configuration directory ...` **e** o `FATAL` |
+
+O preço é o log voltar a ter as consultas do Realtime. **Não medido:** o volume
+desse ruído — o Realtime não subiu na reprodução, que foi só do `db`.
 
 ## Variáveis
 

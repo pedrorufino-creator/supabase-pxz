@@ -426,7 +426,12 @@ services:
       - ./volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:Z
       # Changes required for Pooler support
       - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:Z
-      # Use named volume to persist pgsodium decryption key between restarts
+      # Volume nomeado para persistir a chave do pgsodium entre reinicios.
+      # ARMADILHA MEDIDA: este volume NAO e repovoado quando a imagem muda de
+      # versao. A postgresql.conf do 17 faz include_dir em
+      # /etc/postgresql-custom/conf.d, que a imagem 15 nao tem — um db-config
+      # herdado do 15 derruba o 17 em laco. Trocou a tag da imagem: apague
+      # este volume. Ver README, "Antes de implantar".
       - db-config:/etc/postgresql-custom
     healthcheck:
       test: [ "CMD", "pg_isready", "-U", "postgres", "-h", "localhost" ]
@@ -449,7 +454,10 @@ services:
         "-c",
         "config_file=/etc/postgresql/postgresql.conf",
         "-c",
-        "log_min_messages=fatal" # prevents Realtime polling queries from appearing in logs
+        # MEDIDO: com "fatal", a linha LOG que NOMEIA o arquivo de config que
+        # falta e suprimida, e sobra so "contains errors" — que nao diagnostica
+        # nada. Era "fatal" no modelo, para o Realtime nao encher o log.
+        "log_min_messages=warning"
       ]
 
   # Update the DATABASE_URL if you are using an external Postgres database
