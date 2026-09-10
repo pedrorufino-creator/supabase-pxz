@@ -31,12 +31,21 @@ Sobram nove serviços: `auth db imgproxy kong meta realtime storage studio supav
 código 1 e `FATAL: database files are incompatible with server`. Ou o data dir
 nasce vazio, ou roda-se `utils/upgrade-pg17.sh` antes.
 
-**Um PGDATA vazio em bind mount pode pular os init scripts.** Medido no macOS:
-`PostgreSQL Database directory appears to contain a database; Skipping
-initialization`, o `roles.sql` não roda, e o banco fica com **1 papel em vez de
-13** — todo serviço falha com `28P01`. Com volume nomeado, inicializa correto.
-Se acontecer no servidor, é trocar a linha do PGDATA em `docker-compose.yml`
-por um volume nomeado. Não foi medido em Linux.
+**O PGDATA é volume NOMEADO (`db-data`), não bind mount.** Medido no macOS com
+bind mount: `PostgreSQL Database directory appears to contain a database;
+Skipping initialization`, o `roles.sql` não roda, e o banco fica com **1 papel em
+vez de 13** — todo serviço falha com `28P01`. Com volume nomeado, inicializa
+correto. Os seis init scripts continuam bind mount; só o PGDATA mudou.
+
+Em 2026-09-09 o `db` subiu **unhealthy em ~7 s no servidor**, com o `.env` já
+criado — relato do operador, que atribuiu ao PGDATA. A troca é dessa data.
+**Não medido:** que ela resolve. Ninguém deste repositório alcança o servidor.
+
+**E o log do container é o que separa os dois modos de falha**, porque a correção
+difere. `database files are incompatible with server` é data dir do 15 aberto
+pelo 17, e aí o caminho é `utils/upgrade-pg17.sh` **com os dados preservados** —
+volume nomeado nasce vazio, então o que estiver em `volumes/db/data` deixa de ser
+lido (não é apagado, fica órfão). Numa instalação nova não há o que preservar.
 
 ## Variáveis
 
