@@ -139,6 +139,35 @@ porta nem resolvem nome. Mexer neles é mexer no único caminho deste repositór
 que já quebrou duas vezes (ver os três modos de falha abaixo), e o `webhooks.sql`
 é justamente um deles: **é ele que CRIA o papel que o `roles.sql` altera**.
 
+## A saída do pxz-auth, e por que ela NÃO é a rede compartilhada
+
+O GoTrue precisa alcançar o servidor de e-mail — sem isso não há convite nem
+recuperação de senha —, e a `pxz-internal` é `internal: true`: **não tem rota
+para fora**. O pedido foi "um segundo pé na `default`, como o kong e o db".
+
+**Entregamos a SAÍDA sem a ENTRADA**, numa rede dedicada (`pxz-saida`), e a
+diferença não é estética. A `default` é a rede compartilhada do EasyPanel: com o
+`pxz-auth` nela, qualquer container do servidor passaria a resolver `pxz-auth` e
+a falar direto com a porta 9999 — **por fora do Kong**, que é justamente quem
+exige a `apikey` nas rotas de `/auth/v1`. Adivinhação de senha contra o GoTrue
+deixaria de passar pelo gateway.
+
+**Medido em 2026-09-10, com controle:**
+
+| de onde | `smtp.gmail.com:587` | `pxz-auth` é resolvível? |
+|---|---|---|
+| `pxz-saida` (a rede nova) | **alcança** | — |
+| `pxz-internal` | não alcança | — |
+| rede compartilhada, com o auth SÓ na saída | — | **não resolve** |
+| rede compartilhada, com o auth NELA (controle) | — | resolve — é o que a `default` faria |
+
+E a pilha real subiu com isso: os três `healthy`, e `/auth/v1/health` pelo Kong
+continua `200`.
+
+**Vale para o próximo serviço que precisar da internet:** a pergunta não é "ele
+precisa de rede?", é "ele precisa FALAR ou precisa SER FALADO?". As duas têm
+respostas diferentes, e só uma costuma ser o pedido.
+
 ## Antes de implantar
 
 São **três** modos de falha do `db`, e o log do container é o que os separa —

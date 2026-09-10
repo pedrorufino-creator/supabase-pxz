@@ -80,7 +80,20 @@ services:
 
   pxz-auth:
     networks:
+      # SAIDA, e nao a rede compartilhada. O GoTrue precisa alcancar o
+      # servidor de e-mail (smtp.gmail.com:587), e a pxz-internal e
+      # `internal: true` — nao tem rota para fora. O pedido era "um segundo
+      # pe na default, como o kong e o db", e a default resolveria a saida
+      # ABRINDO a entrada junto: qualquer container do servidor passaria a
+      # resolver `pxz-auth` e a falar com a 9999 POR FORA do Kong, que e
+      # quem exige a apikey nas rotas de /auth/v1.
+      #
+      # MEDIDO em 2026-09-10, com controle: nesta rede dedicada o container
+      # alcanca smtp.gmail.com:587 E continua invisivel da rede
+      # compartilhada; o controle mostra que na compartilhada ele resolve.
+      # Saida e entrada sao coisas diferentes, e so uma foi pedida.
       - pxz-internal
+      - pxz-saida
     image: supabase/gotrue:v2.186.0
     restart: unless-stopped
     healthcheck:
@@ -282,6 +295,11 @@ services:
   # Update the DATABASE_URL if you are using an external Postgres database
 
 networks:
+  # SAIDA do pxz-auth, e de mais ninguem. Nao e `internal`, entao tem rota para
+  # a internet; e nao e a `default`, entao nenhum outro projeto do servidor esta
+  # nela — a diferenca entre poder FALAR com o smtp e poder SER FALADO.
+  pxz-saida:
+
   # Fechada: sem rota para fora e invisivel de fora. So o pxz-kong tem um pe
   # na rede do EasyPanel. Medido em 2026-09-10: container so nela nao alcanca
   # a internet, resolve os irmaos por nome, e de fora dela ninguem o enxerga.
