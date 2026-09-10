@@ -1,0 +1,13 @@
+# Segredo: nunca commitar. As variáveis vivem em Ambiente, no EasyPanel.
+.env
+.env.*
+!.env.example
+
+# Dados de runtime, gerados pelos containers
+volumes/db/data/
+volumes/storage/
+
+# Sobras
+docker-compose.override.yml
+test.http
+*.log
