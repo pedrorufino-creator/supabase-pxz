@@ -421,18 +421,20 @@ services:
       # fazer o entrypoint pular a inicializacao ("Skipping initialization"),
       # e ai roles.sql nao roda — o banco fica com 1 papel em vez de 13 e todo
       # servico falha com 28P01. Ver README, "Antes de implantar".
-      - db-data:/var/lib/postgresql/data
+      - db-data-pg17:/var/lib/postgresql/data
       # Changes required for internal supabase data such as _analytics
       - ./volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:Z
       # Changes required for Pooler support
       - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:Z
       # Volume nomeado para persistir a chave do pgsodium entre reinicios.
-      # ARMADILHA MEDIDA: este volume NAO e repovoado quando a imagem muda de
-      # versao. A postgresql.conf do 17 faz include_dir em
-      # /etc/postgresql-custom/conf.d, que a imagem 15 nao tem — um db-config
-      # herdado do 15 derruba o 17 em laco. Trocou a tag da imagem: apague
-      # este volume. Ver README, "Antes de implantar".
-      - db-config:/etc/postgresql-custom
+      # O SUFIXO -pg17 E A CORRECAO, e nao enfeite: volume nomeado NAO e
+      # repovoado quando a imagem muda de versao, e a postgresql.conf do 17 faz
+      # include_dir em /etc/postgresql-custom/conf.d, que a imagem 15 nao tem —
+      # um db-config herdado do 15 derruba o 17 em laco. Nome novo faz o `up`
+      # criar volume VAZIO, que o Docker popula da imagem certa.
+      # Ao trocar a tag da imagem: ou apague o volume no host, ou mude o sufixo.
+      # Ver README, "Antes de implantar".
+      - db-config-pg17:/etc/postgresql-custom
     healthcheck:
       test: [ "CMD", "pg_isready", "-U", "postgres", "-h", "localhost" ]
       interval: 5s
@@ -512,6 +514,6 @@ services:
       ]
 
 volumes:
-  db-config:
-  db-data:
+  db-config-pg17:
+  db-data-pg17:
   deno-cache:
