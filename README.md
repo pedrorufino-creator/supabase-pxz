@@ -70,6 +70,24 @@ precisa de um segundo pé fora da interna, como o Kong tem.
 **Conferir no EasyPanel:** o roteamento de domínio aponta para o serviço pelo
 NOME. Era `kong`, agora é `pxz-kong`.
 
+## O banco na rede do EasyPanel — o que essa exceção custa
+
+Desde 2026-09-10 o `pxz-db` tem um **segundo pé na rede do EasyPanel**, como o
+`pxz-kong`, porque a aplicação (`clinic`) precisa alcançá-lo. É uma exceção
+consciente ao isolamento da seção acima, e o que ela troca precisa estar escrito:
+
+- **O prefixo `pxz-` protege contra COLISÃO de nome, não contra ALCANCE.** Com o
+  segundo pé, qualquer container da rede compartilhada resolve `pxz-db` e abre
+  conexão na 5432. O que separa é **credencial**, e só ela.
+- **A senha do `pxz_provisioner` passa a valer mais**, porque ele tem `bypassrls`
+  e enxerga todas as clínicas. O `deploy.sql` cria os dois papéis com a MESMA
+  senha e manda trocar a dele logo depois — nesta topologia isso deixa de ser
+  zelo e vira obrigação.
+- **A alternativa é melhor, e depende do EasyPanel:** pôr o serviço `clinic` na
+  `pxz-internal` em vez de tirar o banco de lá. Aí ninguém mais na rede
+  compartilhada enxerga a 5432. Se o painel deixar a aplicação entrar numa rede
+  declarada por outro compose, é esse o caminho — e o segundo pé do `pxz-db` sai.
+
 **Ficam, e por quê:** `imgproxy` (o `storage` declara `depends_on` nele) e
 `volumes/db/_supabase.sql` (o `supavisor` conecta no banco `_supabase`; apagar
 esse init quebra o pooler).

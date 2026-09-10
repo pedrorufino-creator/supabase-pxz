@@ -425,7 +425,12 @@ services:
 
   pxz-db:
     networks:
+      # SEGUNDO PE na rede do EasyPanel, como o pxz-kong: e por ela que a
+      # aplicacao (servico `clinic`) alcanca o banco. Isso reexpoe o banco a
+      # rede compartilhada — o que o prefixo pxz- protege e a COLISAO de nome,
+      # nao o alcance. Ver README, "O banco na rede do EasyPanel".
       - pxz-internal
+      - default
     # Postgres 17, conforme docker-compose.pg17.yml do modelo.
     # A regra do projeto (CLAUDE.md) é 17 em dev e em produção.
     image: supabase/postgres:17.6.1.084
