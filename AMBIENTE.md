@@ -28,7 +28,7 @@ instalação**. Trocar o segredo e não regerar as duas derruba auth, storage e 
 ### Banco e conexão
 | variável | sugerido | nota |
 |---|---|---|
-| `POSTGRES_HOST` | `db` | nome do serviço |
+| `POSTGRES_HOST` | `pxz-db` | nome do serviço. **Mudou em 2026-09-10**: era `db`, e nome genérico em rede compartilhada foi o incidente do Studio — ver README |
 | `POSTGRES_PORT` | `5432` | |
 | `POSTGRES_DB` | `postgres` | o banco da aplicação entra como schema `app` aqui |
 

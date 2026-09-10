@@ -16,8 +16,59 @@ Os originais intocados dos dois arquivos que mexemos estão em `MODELO/`, para
 | 4 | `functions` removido | `/functions/v1/` era a única rota de serviço sem key-auth nem ACL, e nada dependia dele |
 | 5 | `db` em `supabase/postgres:17.6.1.084` | a regra do projeto é Postgres 17 em dev e em produção, sem exceção |
 
+| 6 | todo serviço com prefixo `pxz-` | incidente de 2026-09-10 — ver abaixo |
+| 7 | rede `pxz-internal` com `internal: true`, e só o `pxz-kong` fora dela | idem |
+
 `kong.yml` perdeu as rotas `rest-v1`, `graphql-v1` e `functions-v1` — nenhum
 vestígio do que decidimos não ter.
+
+## O incidente de 2026-09-10, e por que os nomes têm prefixo
+
+**Às 00:11 de 2026-09-10 o Studio aberto pelo NOSSO Kong mostrou o Supabase de
+outro projeto do mesmo servidor EasyPanel** — o "TCC Flow", o CRM do Renato.
+Dado de outro sistema servido pelo nosso gateway. O serviço foi parado.
+
+**A causa é DNS, não autenticação.** Os projetos dividem rede no EasyPanel, e os
+nomes de serviço do modelo são genéricos: `db`, `studio`, `kong`, `auth`, `meta`.
+Numa rede compartilhada, `studio` resolve para *algum* container com esse nome —
+e não há nada que garanta que seja o nosso. Nenhuma senha falhou: o Kong
+perguntou por `studio` e a rede respondeu com o de outro projeto.
+
+**Duas correções, e as duas são necessárias:**
+
+1. **Nome próprio.** Os nove serviços passaram a `pxz-db`, `pxz-studio`,
+   `pxz-kong`, `pxz-auth`, `pxz-meta`, `pxz-storage`, `pxz-realtime`,
+   `pxz-imgproxy`, `pxz-supavisor`, e **toda** referência por nome foi junto: os
+   `depends_on`, `STUDIO_PG_META_URL`, `SUPABASE_URL`, `IMGPROXY_URL`, o
+   healthcheck do storage, os 25 upstreams do `kong.yml` e o fallback do
+   `pooler.exs`. Medido depois: dentro da nossa rede, `db` e `studio` **não
+   resolvem mais**, e `pxz-db` resolve.
+2. **Rede fechada.** `pxz-internal` é `internal: true` e leva os nove; **só o
+   `pxz-kong` tem um segundo pé na rede do EasyPanel**, porque é ele o gateway.
+   Medido: container só na interna não alcança a internet, resolve os irmãos por
+   nome, e de fora dela ninguém o enxerga.
+
+**Nome próprio sem rede fechada não bastaria**, e é o que torna a segunda
+correção obrigatória: prefixo evita a colisão acidental, mas o banco continuaria
+alcançável de qualquer container do servidor por quem soubesse o nome. E rede
+fechada sem nome próprio também não: dois projetos na mesma rede compartilhada
+voltam a colidir.
+
+**Um defeito HERDADO que apareceu no caminho, e era da mesma família.** O
+`kong.yml` roteava `realtime-dev.supabase-realtime`, e **nem o modelo nem nós
+temos `container_name`** — esse nome nunca resolveu na nossa pilha. Numa rede
+compartilhada, um nome pendurado assim é exatamente o que encontra o container de
+outro projeto. Agora é o alias `realtime-dev.pxz-realtime`, declarado no serviço:
+o primeiro rótulo continua sendo `realtime-dev`, que é de onde o realtime tira o
+tenant, e o resto é nosso.
+
+**O que isso custa:** serviço que só vive na rede interna **não alcança a
+internet**. Hoje nada precisa — SMTP está vazio e não há provedor externo de
+login. **Na Etapa 4 isso morde**: para o GoTrue mandar e-mail, o `pxz-auth`
+precisa de um segundo pé fora da interna, como o Kong tem.
+
+**Conferir no EasyPanel:** o roteamento de domínio aponta para o serviço pelo
+NOME. Era `kong`, agora é `pxz-kong`.
 
 **Ficam, e por quê:** `imgproxy` (o `storage` declara `depends_on` nele) e
 `volumes/db/_supabase.sql` (o `supavisor` conecta no banco `_supabase`; apagar
