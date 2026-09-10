@@ -99,7 +99,45 @@ aborta com `role "supabase_functions_admin" does not exist`, o container sai com
 código 3 e o banco nunca nasce. Este repositório existe para tirar peça; esta
 não sai.
 
-Sobram nove serviços: `auth db imgproxy kong meta realtime storage studio supavisor`.
+**Desde 2026-09-10 sobram TRÊS: `pxz-db pxz-auth pxz-kong`.** Ver abaixo.
+
+## Só o GoTrue: a superfície mínima (2026-09-10)
+
+O cliente fechou a decisão: **o banco de prontuário NÃO se move** — fica no
+PostgreSQL próprio —, e do Supabase usamos **só o Auth**. O Postgres deste pacote
+guarda apenas o schema `auth` do GoTrue.
+
+Consequência: `pxz-studio`, `pxz-meta`, `pxz-storage`, `pxz-imgproxy`,
+`pxz-realtime` e `pxz-supavisor` **saíram do arquivo**. Nenhum deles é chamado
+pela aplicação: mídia é MinIO por decisão do CLAUDE.md, não usamos websocket do
+Supabase, e o pooler servia um banco que agora só o GoTrue usa.
+
+**O GoTrue não precisa de irmãos — precisa do banco, e nada mais.** Medido em
+2026-09-10: com o Studio PARADO, `GET /auth/v1/health` pelo Kong devolveu `200` e
+`{"version":"v2.186.0","name":"GoTrue"}`. O único acoplamento era de compose, não
+de runtime: `pxz-kong` tinha `depends_on: pxz-studio`, e um `up` arrastava o
+Studio junto. Saiu.
+
+**O `kong.yml` ficou com SETE rotas, todas de `/auth/v1`** — a mesma regra dos
+desvios 3 e 4: nenhum vestígio do que decidimos não ter. Saíram `realtime-v1-ws`,
+`realtime-v1-rest`, `storage-v1`, `meta`, `mcp`, `mcp-blocker`,
+`well-known-oauth` (descoberta de OAuth, que sem provedor externo não serve) e
+`dashboard`.
+
+**O Studio deixou de existir por CONSTRUÇÃO, não por restrição.** Não há rota
+para ele, e o consumer `DASHBOARD` com o `basicauth` saiu junto — sem rota, aquela
+senha não guardava nada. Medido: `GET /` no Kong responde **404**.
+
+Isto também fecha, de lado, o achado de 2026-09-10 de que o Studio conectava como
+`supabase_admin` — superusuário. Com o Supabase servindo só o GoTrue, o banco dele
+não tem prontuário; e sem rota, ninguém chega ao painel de qualquer forma.
+
+**Os init scripts do banco FICAM, todos.** `realtime.sql`, `pooler.sql` e
+`_supabase.sql` são de serviços que saíram, e mesmo assim não os removi: eles
+rodam uma vez, criam objeto que ninguém lê, e não são superfície — não escutam
+porta nem resolvem nome. Mexer neles é mexer no único caminho deste repositório
+que já quebrou duas vezes (ver os três modos de falha abaixo), e o `webhooks.sql`
+é justamente um deles: **é ele que CRIA o papel que o `roles.sql` altera**.
 
 ## Antes de implantar
 
