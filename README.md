@@ -103,6 +103,10 @@ não sai.
 
 ## Só o GoTrue: a superfície mínima (2026-09-10)
 
+**Revisto em 2026-09-12: o Studio e o pg-meta VOLTARAM, com um portão** — ver a seção
+"O Studio de volta". O que segue é o registro de como a superfície ficou mínima, e continua
+valendo para tudo que não é Studio.
+
 O cliente fechou a decisão: **o banco de prontuário NÃO se move** — fica no
 PostgreSQL próprio —, e do Supabase usamos **só o Auth**. O Postgres deste pacote
 guarda apenas o schema `auth` do GoTrue.
@@ -167,6 +171,70 @@ continua `200`.
 **Vale para o próximo serviço que precisar da internet:** a pergunta não é "ele
 precisa de rede?", é "ele precisa FALAR ou precisa SER FALADO?". As duas têm
 respostas diferentes, e só uma costuma ser o pedido.
+
+## O Studio de volta (2026-09-12), e o portão que o acompanha
+
+**Decisão do Pedro, com o risco ACEITO:** o Studio volta a ser servido na web pelo Kong,
+porque o operador precisa OLHAR o schema `auth` do GoTrue e o único caminho era o console
+do EasyPanel. O que torna isso aceitável hoje é uma coisa só, e ela está medida: **o
+`pxz-db` tem apenas o schema `auth` — nenhum paciente** (zero tabelas em `app`, informado
+pelo operador em 2026-09-10). Superusuário exposto alcança só os logins.
+
+**O portão, na palavra dele, e está também no `CLAUDE.md` do prontuario-xz
+("Infraestrutura"):** *Studio do Supabase aberto na web com pg-meta superusuário — decisão
+do Pedro em 12/09, aceitável só enquanto o pxz-db tem apenas o schema auth. Fechar
+obrigatoriamente antes de qualquer dado de prontuário migrar para este Postgres (restrição
+por IP ou pg-meta com papel não-superusuário). Reabrir depois disso é vazamento de todos os
+tenants.*
+
+### O que voltou, e o que não voltou
+
+| peça | estado | motivo |
+|---|---|---|
+| `pxz-studio`, `pxz-meta` | voltaram, **só na `pxz-internal`** | quem chega neles chega pelo Kong; nenhum outro projeto do servidor resolve os nomes |
+| consumer `DASHBOARD` + `basicauth_credentials` | voltou | é o que guarda a rota `/` |
+| rota `dashboard` (`/` → Studio, basic-auth) | voltou — **ABRE** | o pedido |
+| rota `meta` (`/pg/` → pg-meta, key-auth + ACL `admin`) | voltou — **ABRE** | o pedido; só a `SERVICE_ROLE_KEY` passa |
+| rotas `mcp-blocker` (`/api/mcp`) e `mcp` (`/mcp`), em 403 | voltaram — **FECHAM** | sem elas o catch-all de `/` alcançaria o servidor MCP do Studio, que executa SQL pelo pg-meta, atrás da MESMA senha. O modelo fecha os dois; aqui fica igual |
+| `depends_on: pxz-studio` no Kong | **não voltou** | o gateway do LOGIN não pode esperar o Studio ficar `healthy` — é a cadeia `analytics -> studio -> kong` do desvio 1, de novo. O Kong resolve `pxz-studio` na requisição (`KONG_DNS_NOT_FOUND_TTL: 1`) |
+
+As variáveis obrigatórias vão de 27 para **34** — as sete que o `AMBIENTE.md` mandava
+apagar voltam, e a `DASHBOARD_PASSWORD` mudou de natureza. Ver `AMBIENTE.md`.
+
+### Medido no ensaio local, com controle
+
+Pilha inteira numa cópia descartável (`docker compose -p pxz-ensaio`), os cinco `healthy`,
+sondas de um container na rede compartilhada contra `pxz-kong:8000`. Derrubada com `down -v`
+no fim; nada foi escrito no servidor.
+
+| sonda | resultado | o que prova |
+|---|---|---|
+| `GET /` sem credencial | **401** | a rota exige senha |
+| `GET /` senha errada (o `Authorization` enviado foi conferido com `-v`) | **401** | controle negativo |
+| `GET /` usuário errado, senha certa | **401** | segundo controle negativo |
+| `GET /` senha certa | **307** → `/project/default` | controle positivo: o Studio está lá |
+| `GET /pg/tables` sem `apikey` | **401** | key-auth |
+| `GET /pg/tables` com a `anon` | **403** | ACL só `admin` |
+| `GET /pg/tables` com a `service_role` | **200** | controle positivo |
+| `POST /pg/query` `select current_user, usesuper` | **`supabase_admin`, `usesuper: true`** | **a frase do portão não é hipótese** |
+| `GET /api/mcp` e `GET /mcp` com a senha certa | **403** | as duas rotas que FECHAM fecham |
+| `GET /auth/v1/health` com a `anon` | **200** | o login continua de pé com o Studio ao lado |
+| DNS da rede compartilhada | `pxz-kong` e `pxz-db` resolvem; `pxz-studio`, `pxz-meta` e `pxz-auth` **não** | o isolamento da seção do incidente continua igual |
+
+### Como o portão se fecha, quando chegar a hora
+
+Dois caminhos, e qualquer um serve; o segundo é o definitivo:
+
+1. **`ip-restriction` na rota `dashboard`** do `kong.yml` — o plugin já está em
+   `KONG_PLUGINS`. Fecha o Studio a quem não está na lista; o pg-meta continua superusuário.
+2. **pg-meta sem superusuário**: `PG_META_DB_USER` no `pxz-meta` e `POSTGRES_USER_READ_WRITE`
+   no Studio apontando para um papel criado para isso — Supabase, *Self-Hosting → Remove
+   superuser access*. Fecha a causa, não o acesso.
+
+**A senha.** `DASHBOARD_PASSWORD` é agora senha de superusuário do banco na internet. Hex, 32
+caracteres no mínimo, nunca a do modelo, nunca reaproveitada — e **ninguém deste repositório
+alcança o Ambiente para conferir a que está lá**. O passo de aplicar manda gerar uma nova
+antes de colar o compose, em vez de confiar na que ficou.
 
 ## Antes de implantar
 
@@ -269,8 +337,8 @@ desse ruído — o Realtime não subiu na reprodução, que foi só do `db`.
 
 ## Variáveis
 
-Nenhum segredo mora neste repositório. As 46 obrigatórias vão em **Ambiente**,
-no serviço do EasyPanel — ver `AMBIENTE.md`.
+Nenhum segredo mora neste repositório. As obrigatórias vão em **Ambiente**, no serviço do
+EasyPanel — a contagem e a lista vivem em `AMBIENTE.md`, e só lá.
 
 ## Não empacotado, de propósito
 

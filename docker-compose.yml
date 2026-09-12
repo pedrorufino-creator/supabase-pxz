@@ -23,6 +23,23 @@
 #
 # ATENÇÃO: este arquivo ainda faz bind mount de ./volumes/. Ver a lista de
 # arquivos exigidos no relatório que acompanha.
+# STUDIO E PG-META DE VOLTA EM 2026-09-12 — decisao do Pedro, com o risco ACEITO
+# e um PORTAO escrito no CLAUDE.md do prontuario-xz ("PORTAO DE PRODUCAO: o
+# Studio"). Sairam em 0866492 ("so o GoTrue"); voltam porque o operador precisa
+# OLHAR o schema auth do GoTrue pela web, e o unico caminho era o console.
+#
+#   - o pg-meta conecta como supabase_admin, que e SUPERUSUARIO. Quem passa
+#     pelo basic-auth do Kong, ou tem a SERVICE_ROLE_KEY, tem o banco inteiro
+#     pela web. Hoje esse banco tem SO o schema auth — nenhum paciente — e e
+#     por isso, e so por isso, que o risco foi aceito.
+#   - FECHAR ANTES de qualquer dado de prontuario entrar neste Postgres:
+#     ip-restriction na rota `dashboard` do kong.yml, ou PG_META_DB_USER sem
+#     superusuario. Reabrir depois disso e vazamento de todos os tenants.
+#   - o pxz-kong NAO ganhou depends_on no Studio, de proposito: o gateway do
+#     LOGIN nao pode esperar o Studio ficar healthy (e a cadeia analytics ->
+#     studio -> kong do desvio 1, de novo). O Kong resolve `pxz-studio` na
+#     requisicao — KONG_DNS_NOT_FOUND_TTL: 1.
+#
 # Usage
 #   Start:              docker compose up -d
 #   Stop:               docker compose down
@@ -36,6 +53,63 @@
 name: supabase
 
 services:
+
+  pxz-studio:
+    networks:
+      # So na interna: quem chega ao Studio chega pelo pxz-kong, e pelo
+      # basic-auth dele. Nenhum outro projeto do servidor resolve este nome.
+      - pxz-internal
+    image: supabase/studio:2026.04.27-sha-5f60601
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e
+            \"fetch('http://localhost:3000/api/platform/profile').then((r) =>
+            {if (r.status !== 200) throw new Error(r.status)})\""
+        ]
+      timeout: 10s
+      interval: 5s
+      retries: 3
+    environment:
+      #  Listen on all IPv4 interfaces
+      HOSTNAME: "0.0.0.0"
+
+      STUDIO_PG_META_URL: http://pxz-meta:8080
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # E ESTA a linha que fecha o portao pelo lado do papel, quando chegar a
+      # hora: um papel sem superusuario aqui e PG_META_DB_USER igual no pxz-meta.
+      # See: https://supabase.com/docs/guides/self-hosting/remove-superuser-access
+      #POSTGRES_USER_READ_WRITE: postgres
+
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS}
+      PGRST_DB_MAX_ROWS: ${PGRST_DB_MAX_ROWS:-1000}
+      PGRST_DB_EXTRA_SEARCH_PATH: ${PGRST_DB_EXTRA_SEARCH_PATH:-public}
+
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      SUPABASE_URL: http://pxz-kong:8000
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+
+      # Logflare/analytics removido: sem backend, a aba de Logs do Studio
+      # chamaria um host que não existe.
+      NEXT_PUBLIC_ENABLE_LOGS: "false"
+      SNIPPETS_MANAGEMENT_FOLDER: /app/snippets
+      EDGE_FUNCTIONS_MANAGEMENT_FOLDER: /app/edge-functions
+    volumes:
+      - ./volumes/snippets:/app/snippets:Z
+      - ./volumes/functions:/app/edge-functions:Z
 
   pxz-kong:
     image: kong/kong:3.9.1
@@ -73,6 +147,14 @@ services:
       SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      # O basic-auth da rota `dashboard` do kong.yml. A senha e a de um
+      # SUPERUSUARIO do banco na internet, nao a de um painel — gerar com
+      # `openssl rand -hex 16` ou mais, e NUNCA a do modelo. Hex, e nao base64:
+      # o entrypoint substitui todo `$NOME` do kong.yml pelo ambiente, e o
+      # valor vai entre aspas simples no YAML — `$`, `'` e `\` no valor
+      # corrompem a configuracao em silencio.
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
       SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
       ANON_KEY_ASYMMETRIC: ${ANON_KEY_ASYMMETRIC:-}
       SERVICE_ROLE_KEY_ASYMMETRIC: ${SERVICE_ROLE_KEY_ASYMMETRIC:-}
@@ -226,6 +308,28 @@ services:
       # GOTRUE_HOOK_SEND_EMAIL_ENABLED: "false"
       # GOTRUE_HOOK_SEND_EMAIL_URI: "http://host.docker.internal:54321/functions/v1/email_sender"
       # GOTRUE_HOOK_SEND_EMAIL_SECRETS: "v1,whsec_VGhpcyBpcyBhbiBleGFtcGxlIG9mIGEgc2hvcnRlciBCYXNlNjQgc3RyaW5n"
+
+  pxz-meta:
+    networks:
+      # So na interna. O caminho de fora e /pg/ no Kong, com key-auth e ACL
+      # `admin` — ou seja, a SERVICE_ROLE_KEY. E o Studio fala com ele por
+      # nome, direto, sem passar pelo Kong.
+      - pxz-internal
+    image: supabase/postgres-meta:v0.96.3
+    restart: unless-stopped
+    depends_on:
+      pxz-db:
+        # Disable this if you are using an external Postgres database
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: ${POSTGRES_HOST}
+      PG_META_DB_PORT: ${POSTGRES_PORT}
+      PG_META_DB_NAME: ${POSTGRES_DB}
+      # SUPERUSUARIO — e o que o portao do CLAUDE.md existe para fechar.
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
 
   pxz-db:
     networks:

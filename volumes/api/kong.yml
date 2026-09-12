@@ -4,9 +4,12 @@ _transform: true
 ###
 ### Consumers / Users
 ###
-# O consumer DASHBOARD saiu junto com a rota do Studio: sem rota, o basicauth
-# dele nao guardava nada. Ver README, "So o GoTrue".
+# O consumer DASHBOARD saiu em 2026-09-10 junto com a rota do Studio (sem rota,
+# o basicauth dele nao guardava nada) e VOLTOU em 2026-09-12 com as duas rotas
+# do fim deste arquivo. Ver README, "O Studio de volta", e o PORTAO no
+# CLAUDE.md do prontuario-xz.
 consumers:
+  - username: DASHBOARD
   - username: anon
     keyauth_credentials:
       - key: $SUPABASE_ANON_KEY
@@ -24,6 +27,16 @@ acls:
     group: anon
   - consumer: service_role
     group: admin
+
+###
+### Dashboard credentials
+###
+# A senha de um SUPERUSUARIO do banco na internet — ver o comentario em
+# DASHBOARD_PASSWORD no docker-compose.yml.
+basicauth_credentials:
+  - consumer: DASHBOARD
+    username: '$DASHBOARD_USERNAME'
+    password: '$DASHBOARD_PASSWORD'
 
 ###
 ### API Routes
@@ -120,4 +133,78 @@ services:
             - admin
             - anon
 
-  ## Secure Realtime routes
+  ## As DUAS rotas que ABREM o Studio (2026-09-12), e as duas que FECHAM
+  ##
+  ## `meta` e `dashboard` sao o pedido: pg-meta por /pg/ com a SERVICE_ROLE_KEY,
+  ## e o Studio em / atras do basic-auth. `mcp-blocker` e `mcp` nao abrem nada:
+  ## sem elas o catch-all de / alcancaria /api/mcp — o servidor MCP do Studio,
+  ## que executa SQL pelo pg-meta — atras da MESMA senha. O modelo fecha os
+  ## dois com request-termination, e aqui fica igual.
+
+  ## Secure Database routes
+  - name: meta
+    _comment: 'pg-meta: /pg/* -> http://pxz-meta:8080/*'
+    url: http://pxz-meta:8080/
+    routes:
+      - name: meta-all
+        strip_path: true
+        paths:
+          - /pg/
+    plugins:
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+
+  ## Block access to /api/mcp
+  - name: mcp-blocker
+    _comment: 'Block direct access to /api/mcp'
+    url: http://pxz-studio:3000/api/mcp
+    routes:
+      - name: mcp-blocker-route
+        strip_path: true
+        paths:
+          - /api/mcp
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 403
+          message: "Access is forbidden."
+
+  ## MCP endpoint - fechado. Para abrir so localmente, ver o modelo (MODELO/kong.yml).
+  - name: mcp
+    _comment: 'MCP: /mcp -> http://pxz-studio:3000/api/mcp (fechado)'
+    url: http://pxz-studio:3000/api/mcp
+    routes:
+      - name: mcp
+        strip_path: true
+        paths:
+          - /mcp
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 403
+          message: "Access is forbidden."
+
+  ## Protected Dashboard - catch all remaining routes
+  ##
+  ## PORTAO: antes de qualquer dado de prontuario entrar no pxz-db, esta rota
+  ## ganha `ip-restriction` (o plugin ja esta em KONG_PLUGINS) ou sai. Ver o
+  ## CLAUDE.md do prontuario-xz.
+  - name: dashboard
+    _comment: 'Studio: /* -> http://pxz-studio:3000/*'
+    url: http://pxz-studio:3000/
+    routes:
+      - name: dashboard-all
+        strip_path: true
+        paths:
+          - /
+    plugins:
+      - name: cors
+      - name: basic-auth
+        config:
+          hide_credentials: true
