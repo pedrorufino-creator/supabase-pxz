@@ -236,6 +236,67 @@ caracteres no mínimo, nunca a do modelo, nunca reaproveitada — e **ninguém d
 alcança o Ambiente para conferir a que está lá**. O passo de aplicar manda gerar uma nova
 antes de colar o compose, em vez de confiar na que ficou.
 
+### 14 e 15/09: o Studio esteve na web com credencial ADIVINHÁVEL
+
+**O que aconteceu.** O compose que estava no servidor **não tinha `DASHBOARD_USERNAME` e
+`DASHBOARD_PASSWORD` no serviço `pxz-kong`** — o `3e46937` tem as duas, mas não tinha sido
+empurrado, e o que chegou ao EasyPanel foi outra coisa (mesclado à mão, ou o compose de
+`a53d7a4`). Quando a rota do Studio entrou no ar, o entrypoint do Kong — o do modelo, intocado
+desde `7de0108` — procurou as duas no ambiente do container, não achou, e **deixou o
+placeholder no lugar**: a credencial do `basic-auth` virou usuário `$DASHBOARD_USERNAME` com
+senha `$DASHBOARD_PASSWORD`. `kong config parse` aceita isso sem uma linha de aviso.
+
+**Medido em 2026-09-14, com a pilha inteira e o serviço do Kong sem as duas linhas:**
+
+| `GET /` pelo Kong | resultado |
+|---|---|
+| sem senha | 401 |
+| com o usuário e a senha REAIS do Ambiente | 401 |
+| digitando `$DASHBOARD_USERNAME` e `$DASHBOARD_PASSWORD` | **307 — entra** |
+
+Não é "trancado com a chave perdida": é trancado com uma chave que está escrita na porta.
+
+**Os três estados da variável, e só um deles é silencioso:**
+
+| no container | credencial gerada | `kong config parse` | sintoma |
+|---|---|---|---|
+| declarada e preenchida | usuário e senha reais | passa | o Studio abre com a senha |
+| declarada, vazia no Ambiente | `''` / `''` | **falha**: "length must be at least 1" | o Kong não sobe — alto |
+| **não declarada no serviço** | os dois NOMES, literais | passa | pede senha, a certa não entra, a literal entra |
+
+**O que fecha, e a ordem:** o `kong.yml` novo no bind mount do host ANTES (senão o deploy volta
+ao 404); as duas variáveis no Ambiente (senão é a linha do meio, e o login cai junto); o compose
+**inteiro** de um commit empurrado colado no EasyPanel; deploy. Depois, dois números no console
+do `pxz-kong` e três de fora:
+
+```sh
+env | grep -c '^DASHBOARD_'                                 # 2
+grep -c '\$[A-Z_][A-Z_0-9]*' "$KONG_DECLARATIVE_CONFIG"    # 0 — NENHUM placeholder sobrou
+```
+
+`GET /` sem senha 401; com os dois NOMES **401** (é esta a prova de que a porta fechou); com a
+senha real 307.
+
+**Três regras que ficam:**
+
+1. **Compose no servidor é o ARQUIVO INTEIRO de um commit empurrado**, colado do GitHub pelo
+   hash. Mesclar à mão foi o que deixou duas linhas para trás, e duas linhas foram uma
+   credencial pública.
+2. **Substituição de variável se confere pela AUSÊNCIA de qualquer `$NOME` no resultado**, não
+   pela presença do que se lembrou de olhar. O bloco de console de 2026-09-14 conferia só
+   `LUA_`, passou no ensaio porque o `.env` local tinha as variáveis, e no servidor relatou
+   sucesso sobre uma credencial adivinhável. O controle certo está no bloco acima.
+3. **Não use `/proc/1/environ` para ver o ambiente do Kong**: o nginx reescreve o ambiente do
+   processo 1, e ele mostra zero até para variável que o container recebeu (medido). `env` no
+   console do container é o instrumento certo.
+
+**O que NÃO foi feito, e é a próxima defesa:** o entrypoint continua não parando em placeholder
+não resolvido. Uma guarda de seis linhas depois do `awk` — contar `$NOME` no arquivo gerado e
+sair com a lista — tornaria este estado impossível de repetir em silêncio. Custa um SEGUNDO
+arquivo de bind mount a levar ao host a cada mudança; a alternativa é os dois arquivos
+(`kong.yml` e o entrypoint) passarem a viajar DENTRO do compose, por `configs:`. Decisão para
+quando o servidor estiver estável.
+
 ## Antes de implantar
 
 São **três** modos de falha do `db`, e o log do container é o que os separa —

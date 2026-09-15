@@ -153,6 +153,16 @@ services:
       # o entrypoint substitui todo `$NOME` do kong.yml pelo ambiente, e o
       # valor vai entre aspas simples no YAML — `$`, `'` e `\` no valor
       # corrompem a configuracao em silencio.
+      #
+      # SEM ESTAS DUAS LINHAS O KONG SOBE E ACEITA A CREDENCIAL LITERAL. O
+      # entrypoint (o do modelo, intocado) deixa `$DASHBOARD_USERNAME` e
+      # `$DASHBOARD_PASSWORD` no kong.yml quando a variavel nao existe no
+      # container, `kong config parse` aceita, e quem digitar esses dois NOMES
+      # entra no Studio — na frente de um pg-meta superusuario. MEDIDO em
+      # 2026-09-14 (senha real: 401; os nomes: 307), e foi o estado do servidor
+      # em 14 e 15/09: o compose de la nao tinha as linhas. Regra que fica: o
+      # compose no servidor e o ARQUIVO INTEIRO de um commit empurrado, nunca
+      # mesclado a mao. Ver README, "14 e 15/09".
       DASHBOARD_USERNAME: ${DASHBOARD_USERNAME}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
       SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
