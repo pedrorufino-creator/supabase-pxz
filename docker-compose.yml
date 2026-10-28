@@ -408,6 +408,24 @@ services:
 
   # Update the DATABASE_URL if you are using an external Postgres database
 
+  # ── DESLIGADOS em 2026-10-28 (branch recriar-pxz-db) ─────────────────────────────
+  # pxz-realtime, pxz-supavisor e pxz-storage sairam do arquivo em 0866492 (10/09), mas os
+  # containers do deploy de 10/09 continuaram rodando: o deploy do EasyPanel nao remove orfaos.
+  # Os tres conectavam no pxz-db (o janitor do Realtime apagava particoes a cada minuto).
+  # Estes servicos minimos existem SO para o compose reconhecer os containers e remove-los
+  # (scale: 0). Nao sobem nada. Rollback = voltar o Ramo do EasyPanel para main.
+  pxz-realtime:
+    image: supabase/realtime:v2.76.5
+    scale: 0
+
+  pxz-supavisor:
+    image: supabase/supavisor:2.7.4
+    scale: 0
+
+  pxz-storage:
+    image: supabase/storage-api:v1.48.26
+    scale: 0
+
 networks:
   # SAIDA do pxz-auth, e de mais ninguem. Nao e `internal`, entao tem rota para
   # a internet; e nao e a `default`, entao nenhum outro projeto do servidor esta
