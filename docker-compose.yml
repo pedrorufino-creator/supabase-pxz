@@ -365,7 +365,8 @@ services:
       # fazer o entrypoint pular a inicializacao ("Skipping initialization"),
       # e ai roles.sql nao roda — o banco fica com 1 papel em vez de 13 e todo
       # servico falha com 28P01. Ver README, "Antes de implantar".
-      - db-data-pg17:/var/lib/postgresql/data
+      # Volume NOVO em 2026-10-28: o db-data-pg17 tinha dano fisico em auth.users.
+      - db-data-pg17-r2:/var/lib/postgresql/data
       # Changes required for internal supabase data such as _analytics
       - ./volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:Z
       # Changes required for Pooler support
@@ -440,4 +441,6 @@ networks:
 
 volumes:
   db-config-pg17:
+  db-data-pg17-r2:
+  # O ANTIGO, declarado e NAO montado: e o rollback (voltar o Ramo para main). Nunca apagar.
   db-data-pg17:
